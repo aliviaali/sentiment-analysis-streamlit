@@ -1,224 +1,173 @@
 import streamlit as st
 import pickle
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import re
-from scipy import stats
-from sklearn.metrics import (
-    accuracy_score,
-    precision_recall_fscore_support,
-    confusion_matrix,
-)
-from statsmodels.stats.contingency_tables import mcnemar
+import pandas as pd
+import numpy as np
+import nltk
+
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
+from nltk.corpus import stopwords
 
-st.set_page_config(page_title="Sentiment Analysis Research App", layout="wide")
+# ===============================
+# PAGE CONFIG
+# ===============================
+st.set_page_config(page_title="Demo Sentiment Analysis", layout="wide")
+st.title("📊 Demo Skripsi Sentiment Analysis")
+st.markdown("TF-IDF + Naive Bayes + SVM (Baseline & Optimized)")
 
-# ==========================================================
-# ================= LOAD MODEL =============================
-# ==========================================================
+# ===============================
+# DOWNLOAD STOPWORDS (SAFE)
+# ===============================
+try:
+    nltk.download('stopwords', quiet=True)
+except:
+    pass
+
+# ===============================
+# LOAD ALL MODELS
+# ===============================
 @st.cache_resource
 def load_models():
-    nb_baseline = pickle.load(open("nb_baseline.pkl", "rb"))
-    nb_opt = pickle.load(open("nb_optimized.pkl", "rb"))
-    svm_baseline = pickle.load(open("svm_baseline.pkl", "rb"))
-    svm_opt = pickle.load(open("svm_optimized.pkl", "rb"))
-    tfidf = pickle.load(open("tfidf.pkl", "rb"))
-    return nb_baseline, nb_opt, svm_baseline, svm_opt, tfidf
+    models = {}
 
-nb_baseline, nb_opt, svm_baseline, svm_opt, tfidf = load_models()
+    file_list = {
+        "Naive Bayes Baseline": "nb_baseline.pkl",
+        "Naive Bayes Optimized": "nb_optimized.pkl",
+        "SVM Baseline": "svm_baseline.pkl",
+        "SVM Optimized": "svm_optimized.pkl"
+    }
 
-# ==========================================================
-# ================= PREPROCESSING ==========================
-# ==========================================================
+    for name, file in file_list.items():
+        try:
+            models[name] = pickle.load(open(file, "rb"))
+        except:
+            st.warning(f"{file} tidak ditemukan")
+
+    try:
+        tfidf = pickle.load(open("tfidf.pkl", "rb"))
+    except:
+        st.error("tfidf.pkl tidak ditemukan")
+        tfidf = None
+
+    return models, tfidf
+
+models, tfidf = load_models()
+
+# ===============================
+# PREPROCESSING
+# ===============================
 factory = StemmerFactory()
 stemmer = factory.create_stemmer()
+stop_words = set(stopwords.words('indonesian'))
 
-def preprocess(text):
-    text = text.lower()
-    text = re.sub(r'[^a-zA-Z ]', '', text)
-    text = stemmer.stem(text)
-    return text
+def preprocessing(text):
+    original = text
 
-# ==========================================================
-# ================= SIDEBAR MODEL ==========================
-# ==========================================================
-st.sidebar.title("Pengaturan Model")
+    # Case Folding
+    case_fold = text.lower()
 
-model_choice = st.sidebar.selectbox(
+    # Cleaning
+    cleaning = re.sub(r'[^a-zA-Z\s]', '', case_fold)
+
+    # Tokenization
+    tokens = cleaning.split()
+
+    # Stopword Removal
+    stop_removed = [word for word in tokens if word not in stop_words]
+
+    # Stemming
+    stemming = [stemmer.stem(word) for word in stop_removed]
+
+    final_text = " ".join(stemming)
+
+    return {
+        "original": original,
+        "case_folding": case_fold,
+        "cleaning": cleaning,
+        "tokenization": tokens,
+        "stopword_removal": stop_removed,
+        "stemming": stemming,
+        "final": final_text
+    }
+
+# ===============================
+# INPUT
+# ===============================
+text_input = st.text_area("Masukkan Teks Berita Ekonomi:")
+
+model_choice = st.selectbox(
     "Pilih Model:",
-    [
-        "Naive Bayes Baseline",
-        "Naive Bayes Optimized",
-        "SVM Baseline",
-        "SVM Optimized"
-    ]
+    ["Semua Model"] + list(models.keys())
 )
 
-if model_choice == "Naive Bayes Baseline":
-    selected_model = nb_baseline
-elif model_choice == "Naive Bayes Optimized":
-    selected_model = nb_opt
-elif model_choice == "SVM Baseline":
-    selected_model = svm_baseline
-else:
-    selected_model = svm_opt
+# ===============================
+# PREDICTION BUTTON
+# ===============================
+if st.button("🔍 Analisis Sentimen"):
 
-# ==========================================================
-# ================= JUDUL ==========================
-# ==========================================================
-st.title("📊 Website Sentiment Analysis Skripsi")
-st.markdown("Implementasi Naive Bayes & SVM menggunakan TF-IDF + Uji Hipotesis")
+    if text_input == "":
+        st.warning("Masukkan teks terlebih dahulu")
+    elif tfidf is None:
+        st.error("TF-IDF tidak tersedia")
+    else:
 
-# ==========================================================
-# ================= ANALISIS MANUAL ========================
-# ==========================================================
-st.header("Analisis Kalimat Manual")
+        result = preprocessing(text_input)
 
-user_input = st.text_area("Masukkan Kalimat:")
+        st.subheader("📌 Tahapan Preprocessing")
 
-if st.button("Analisis Sentimen"):
+        col1, col2 = st.columns(2)
 
-    if user_input.strip() != "":
-        cleaned = preprocess(user_input)
-        vector = tfidf.transform([cleaned])
-        prediction = selected_model.predict(vector)[0]
+        with col1:
+            st.markdown("### Sebelum Preprocessing")
+            st.write(result["original"])
 
-        st.subheader("Hasil Preprocessing")
-        st.write("Kalimat Asli:", user_input)
-        st.write("Setelah Preprocessing:", cleaned)
+        with col2:
+            st.markdown("### Setelah Preprocessing")
+            st.write(result["final"])
 
-        st.success(f"Hasil Prediksi: {prediction}")
+        st.markdown("### Detail Proses")
+        st.write("Case Folding:", result["case_folding"])
+        st.write("Cleaning:", result["cleaning"])
+        st.write("Tokenization:", result["tokenization"])
+        st.write("Stopword Removal:", result["stopword_removal"])
+        st.write("Stemming:", result["stemming"])
 
-        # ================= TF-IDF EXPLANATION =================
-        st.subheader("Perhitungan TF-IDF (Simulasi Excel)")
+        # ============================
+        # TF-IDF
+        # ============================
+        st.subheader("📐 Hasil TF-IDF")
 
-        st.markdown("""
-        ### Rumus TF-IDF:
-
-        **TF (Term Frequency)**  
-        TF = (Jumlah kemunculan term dalam dokumen) / (Total kata dalam dokumen)
-
-        **IDF (Inverse Document Frequency)**  
-        IDF = log (Jumlah Dokumen / Jumlah Dokumen yang mengandung term)
-
-        **TF-IDF = TF × IDF**
-        """)
-
+        vector = tfidf.transform([result["final"]])
         feature_names = tfidf.get_feature_names_out()
-        tfidf_values = vector.toarray()[0]
+        dense = vector.todense().tolist()[0]
 
         tfidf_df = pd.DataFrame({
             "Term": feature_names,
-            "TF-IDF Value": tfidf_values
+            "TF-IDF Score": dense
         })
 
-        tfidf_df = tfidf_df[tfidf_df["TF-IDF Value"] > 0]
-        st.dataframe(tfidf_df.sort_values(by="TF-IDF Value", ascending=False).head(20))
+        tfidf_df = tfidf_df[tfidf_df["TF-IDF Score"] > 0]
+        tfidf_df = tfidf_df.sort_values(by="TF-IDF Score", ascending=False)
 
-# ==========================================================
-# ================= EVALUASI MODEL =========================
-# ==========================================================
-st.header("Evaluasi Model + Uji Hipotesis")
+        st.dataframe(tfidf_df)
 
-uploaded_file = st.file_uploader("Upload Dataset CSV", type=["csv"])
+        # ============================
+        # PREDICTION
+        # ============================
+        st.subheader("🤖 Hasil Prediksi Model")
 
-if uploaded_file is not None:
+        if model_choice == "Semua Model":
 
-    df = pd.read_csv(uploaded_file)
+            for name, model in models.items():
+                try:
+                    prediction = model.predict(vector)[0]
+                    st.success(f"{name} ➜ {prediction}")
+                except:
+                    st.error(f"{name} gagal melakukan prediksi")
 
-    st.subheader("Preview Dataset")
-    st.dataframe(df.head())
-    st.write("Kolom tersedia:", list(df.columns))
-
-    with st.form("evaluasi_form"):
-
-        text_column = st.selectbox("Pilih Kolom Text:", df.columns)
-        label_column = st.selectbox("Pilih Kolom Label:", df.columns)
-
-        submit_eval = st.form_submit_button("Proses Evaluasi")
-
-    if submit_eval:
-
-        if text_column == label_column:
-            st.error("Kolom Text dan Label tidak boleh sama!")
         else:
-            st.info("Sedang memproses evaluasi...")
-
-            df["clean"] = df[text_column].astype(str).apply(preprocess)
-
-            st.subheader("Sebelum & Sesudah Preprocessing")
-            preview = pd.DataFrame({
-                "Text Asli": df[text_column].head(10),
-                "Setelah Preprocessing": df["clean"].head(10)
-            })
-            st.dataframe(preview)
-
-            X = tfidf.transform(df["clean"])
-            y = df[label_column]
-
-            nb_pred = nb_opt.predict(X)
-            svm_pred = svm_opt.predict(X)
-
-            # ================= METRICS =================
-            nb_acc = accuracy_score(y, nb_pred)
-            svm_acc = accuracy_score(y, svm_pred)
-
-            st.subheader("Accuracy")
-            st.write("Naive Bayes:", round(nb_acc, 4))
-            st.write("SVM:", round(svm_acc, 4))
-
-            nb_f1 = precision_recall_fscore_support(y, nb_pred, average="macro")[2]
-            svm_f1 = precision_recall_fscore_support(y, svm_pred, average="macro")[2]
-
-            st.subheader("F1 Macro")
-            st.write("Naive Bayes:", round(nb_f1, 4))
-            st.write("SVM:", round(svm_f1, 4))
-
-            # ================= CONFUSION MATRIX =================
-            st.subheader("Confusion Matrix (SVM)")
-            cm = confusion_matrix(y, svm_pred)
-
-            fig, ax = plt.subplots()
-            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-            st.pyplot(fig)
-
-            # ================= UJI HIPOTESIS =================
-            st.subheader("Uji Hipotesis")
-
-            # T-Test
-            nb_correct = (nb_pred == y).astype(int)
-            svm_correct = (svm_pred == y).astype(int)
-
-            t_stat, p_value = stats.ttest_ind(nb_correct, svm_correct)
-
-            st.write("T-Test p-value:", round(p_value, 5))
-
-            if p_value < 0.05:
-                st.success("Terdapat perbedaan signifikan (T-Test)")
-            else:
-                st.warning("Tidak terdapat perbedaan signifikan (T-Test)")
-
-            # McNemar
-            table = [[0, 0], [0, 0]]
-
-            for i in range(len(y)):
-                if nb_pred[i] == y.iloc[i] and svm_pred[i] == y.iloc[i]:
-                    table[0][0] += 1
-                elif nb_pred[i] == y.iloc[i] and svm_pred[i] != y.iloc[i]:
-                    table[0][1] += 1
-                elif nb_pred[i] != y.iloc[i] and svm_pred[i] == y.iloc[i]:
-                    table[1][0] += 1
-                else:
-                    table[1][1] += 1
-
-            result = mcnemar(table, exact=True)
-
-            st.write("McNemar p-value:", round(result.pvalue, 5))
-
-            if result.pvalue < 0.05:
-                st.success("Terdapat perbedaan signifikan (McNemar)")
-            else:
-                st.warning("Tidak terdapat perbedaan signifikan (McNemar)")
+            try:
+                prediction = models[model_choice].predict(vector)[0]
+                st.success(f"{model_choice} ➜ {prediction}")
+            except:
+                st.error("Model gagal melakukan prediksi")
