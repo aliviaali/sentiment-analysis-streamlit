@@ -1,32 +1,34 @@
 import streamlit as st
 import pickle
-import pandas as pd
 import numpy as np
-import re
-from sklearn.metrics import accuracy_score, confusion_matrix
-from scipy import stats
-from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
+import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+import re
+from scipy import stats
+from sklearn.metrics import (
+    accuracy_score,
+    precision_recall_fscore_support,
+    confusion_matrix,
+)
+from statsmodels.stats.contingency_tables import mcnemar
+from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 
-st.set_page_config(page_title="Sentiment Analysis Skripsi", layout="wide")
+st.set_page_config(page_title="Sentiment Analysis Research App", layout="wide")
 
-st.title("📊 Website Sentiment Analysis Skripsi")
-st.write("Implementasi SVM + TF-IDF + Uji Hipotesis + Stratified Random Sampling")
-
-# ==========================================================
-# LOAD MODEL (RINGAN & AMAN)
-# ==========================================================
+# ================= LOAD MODEL =================
 @st.cache_resource
-def load_model():
-    model = pickle.load(open("svm_optimized.pkl", "rb"))
+def load_models():
+    nb_baseline = pickle.load(open("nb_baseline.pkl", "rb"))
+    nb_opt = pickle.load(open("nb_optimized.pkl", "rb"))
+    svm_baseline = pickle.load(open("svm_baseline.pkl", "rb"))
+    svm_opt = pickle.load(open("svm_optimized.pkl", "rb"))
     tfidf = pickle.load(open("tfidf.pkl", "rb"))
-    return model, tfidf
+    return nb_baseline, nb_opt, svm_baseline, svm_opt, tfidf
 
-model, tfidf = load_model()
+nb_baseline, nb_opt, svm_baseline, svm_opt, tfidf = load_models()
 
-# ==========================================================
-# PREPROCESSING
-# ==========================================================
+# ================= PREPROCESSING =================
 factory = StemmerFactory()
 stemmer = factory.create_stemmer()
 
@@ -36,147 +38,171 @@ def preprocess(text):
     text = stemmer.stem(text)
     return text
 
-# ==========================================================
-# ANALISIS MANUAL
-# ==========================================================
-st.header("1️⃣ Analisis Kalimat Manual")
+# ================= SIDEBAR =================
+st.sidebar.title("Pengaturan Model")
 
-user_input = st.text_area("Masukkan Kalimat")
+model_choice = st.sidebar.selectbox(
+    "Pilih Model:",
+    [
+        "Naive Bayes Baseline",
+        "Naive Bayes Optimized",
+        "SVM Baseline",
+        "SVM Optimized"
+    ]
+)
+
+if model_choice == "Naive Bayes Baseline":
+    selected_model = nb_baseline
+elif model_choice == "Naive Bayes Optimized":
+    selected_model = nb_opt
+elif model_choice == "SVM Baseline":
+    selected_model = svm_baseline
+else:
+    selected_model = svm_opt
+
+# ================= HALAMAN UTAMA =================
+st.title("📊 Website Sentiment Analysis Skripsi")
+st.markdown("Implementasi Naive Bayes & SVM + TF-IDF + Uji Hipotesis")
+
+# ==========================================================
+# ================== INPUT MANUAL ==========================
+# ==========================================================
+st.header("Analisis Kalimat Manual")
+
+user_input = st.text_area("Masukkan Kalimat:")
 
 if st.button("Analisis Sentimen"):
-    cleaned = preprocess(user_input)
-    vector = tfidf.transform([cleaned])
-    prediction = model.predict(vector)[0]
+    if user_input.strip() != "":
+        cleaned = preprocess(user_input)
+        vector = tfidf.transform([cleaned])
 
-    st.subheader("Hasil Preprocessing")
-    st.write("Kalimat Asli:", user_input)
-    st.write("Setelah Preprocessing:", cleaned)
+        prediction = selected_model.predict(vector)[0]
 
-    st.success(f"Hasil Prediksi: {prediction}")
+        st.subheader("Hasil Preprocessing")
+        st.write("Kalimat Asli:", user_input)
+        st.write("Setelah Preprocessing:", cleaned)
 
-    # ================= TF-IDF =================
-    st.subheader("Perhitungan TF-IDF (Simulasi Excel)")
+        st.success(f"Hasil Prediksi: {prediction}")
 
-    st.markdown("""
-    ### Rumus TF-IDF
+        if hasattr(selected_model, "predict_proba"):
+            probs = selected_model.predict_proba(vector)[0]
+            prob_df = pd.DataFrame({
+                "Class": selected_model.classes_,
+                "Probability": probs
+            })
+            st.subheader("Probabilitas Kelas")
+            st.dataframe(prob_df)
 
-    **TF = (Jumlah term dalam dokumen) / (Total kata dalam dokumen)**  
-    **IDF = log(N / df)**  
-    **TF-IDF = TF × IDF**
-    """)
+        # ================= TF-IDF EXCEL STYLE =================
+        st.subheader("Perhitungan TF-IDF (Simulasi Excel)")
+        feature_names = tfidf.get_feature_names_out()
+        tfidf_values = vector.toarray()[0]
 
-    feature_names = tfidf.get_feature_names_out()
-    values = vector.toarray()[0]
+        tfidf_df = pd.DataFrame({
+            "Term": feature_names,
+            "TF-IDF": tfidf_values
+        })
 
-    tfidf_df = pd.DataFrame({
-        "Term": feature_names,
-        "TF-IDF Value": values
-    })
-
-    tfidf_df = tfidf_df[tfidf_df["TF-IDF Value"] > 0]
-    st.dataframe(tfidf_df.sort_values(by="TF-IDF Value", ascending=False).head(15))
-
+        tfidf_df = tfidf_df[tfidf_df["TF-IDF"] > 0]
+        st.dataframe(tfidf_df.head(20))
 
 # ==========================================================
-# EVALUASI DATASET
+# ================== EVALUASI DATASET ======================
 # ==========================================================
-st.header("2️⃣ Evaluasi Model + Uji Hipotesis")
+st.header("Evaluasi Model + Uji Hipotesis")
 
-uploaded_file = st.file_uploader("Upload Dataset CSV", type=["csv"])
+uploaded_file = st.file_uploader("Upload Dataset CSV")
 
-if uploaded_file is not None:
-
+if uploaded_file:
     df = pd.read_csv(uploaded_file)
+
+    st.subheader("Preview Dataset")
     st.dataframe(df.head())
 
-    text_col = st.selectbox("Pilih Kolom Text", df.columns)
-    label_col = st.selectbox("Pilih Kolom Label", df.columns)
+    st.write("Kolom tersedia:", list(df.columns))
+
+    text_column = st.selectbox("Pilih Kolom Text:", df.columns)
+    label_column = st.selectbox("Pilih Kolom Label:", df.columns)
 
     if st.button("Proses Evaluasi"):
 
-        df["clean"] = df[text_col].astype(str).apply(preprocess)
+        df["clean"] = df[text_column].astype(str).apply(preprocess)
+
+        st.subheader("Sebelum & Sesudah Preprocessing")
+        preview = pd.DataFrame({
+            "Text Asli": df[text_column].head(10),
+            "Setelah Preprocessing": df["clean"].head(10)
+        })
+        st.dataframe(preview)
 
         X = tfidf.transform(df["clean"])
-        y = df[label_col]
+        y = df[label_column]
 
-        pred = model.predict(X)
+        # ================= PREDIKSI =================
+        nb_pred = nb_opt.predict(X)
+        svm_pred = svm_opt.predict(X)
 
-        acc = accuracy_score(y, pred)
-        st.write("Accuracy:", round(acc, 4))
+        # ================= METRIK =================
+        nb_acc = accuracy_score(y, nb_pred)
+        svm_acc = accuracy_score(y, svm_pred)
 
-        # Confusion Matrix
-        st.subheader("Confusion Matrix")
-        cm = confusion_matrix(y, pred)
+        st.subheader("Accuracy")
+        st.write("Naive Bayes:", round(nb_acc, 4))
+        st.write("SVM:", round(svm_acc, 4))
+
+        # Precision Recall F1
+        nb_pr, nb_rc, nb_f1, _ = precision_recall_fscore_support(y, nb_pred, average="macro")
+        svm_pr, svm_rc, svm_f1, _ = precision_recall_fscore_support(y, svm_pred, average="macro")
+
+        st.subheader("F1 Macro")
+        st.write("Naive Bayes:", round(nb_f1, 4))
+        st.write("SVM:", round(svm_f1, 4))
+
+        # ================= CONFUSION MATRIX =================
+        st.subheader("Confusion Matrix - SVM")
+        cm = confusion_matrix(y, svm_pred)
 
         fig, ax = plt.subplots()
-        ax.imshow(cm)
-        ax.set_title("Confusion Matrix")
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("Actual")
-
-        for i in range(len(cm)):
-            for j in range(len(cm)):
-                ax.text(j, i, cm[i][j], ha="center", va="center")
-
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
         st.pyplot(fig)
 
-        # Uji T-Test sederhana
-        correct = (pred == y).astype(int)
-        t_stat, p_val = stats.ttest_1samp(correct, 0.5)
+        # =====================================================
+        # ================= UJI HIPOTESIS =====================
+        # =====================================================
 
         st.subheader("Uji Hipotesis")
-        st.write("H0: Model tidak lebih baik dari tebakan acak (50%)")
-        st.write("p-value:", round(p_val, 5))
 
-        if p_val < 0.05:
-            st.success("Model signifikan lebih baik dari random")
+        # ===== T-TEST =====
+        nb_correct = (nb_pred == y).astype(int)
+        svm_correct = (svm_pred == y).astype(int)
+
+        t_stat, p_value = stats.ttest_ind(nb_correct, svm_correct)
+
+        st.write("T-Test p-value:", round(p_value, 5))
+
+        if p_value < 0.05:
+            st.success("Terdapat perbedaan signifikan (T-Test)")
         else:
-            st.warning("Model tidak signifikan")
+            st.warning("Tidak terdapat perbedaan signifikan (T-Test)")
 
-# ==========================================================
-# STRATIFIED RANDOM SAMPLING
-# ==========================================================
-st.header("3️⃣ Stratified Random Sampling (Perhitungan Excel)")
+        # ===== MCNEMAR TEST =====
+        table = [[0, 0], [0, 0]]
 
-st.markdown("""
-### Rumus Stratified Random Sampling
+        for i in range(len(y)):
+            if nb_pred[i] == y.iloc[i] and svm_pred[i] == y.iloc[i]:
+                table[0][0] += 1
+            elif nb_pred[i] == y.iloc[i] and svm_pred[i] != y.iloc[i]:
+                table[0][1] += 1
+            elif nb_pred[i] != y.iloc[i] and svm_pred[i] == y.iloc[i]:
+                table[1][0] += 1
+            else:
+                table[1][1] += 1
 
-Jika:
+        result = mcnemar(table, exact=True)
 
-N = Total populasi  
-Nh = Jumlah populasi tiap kelas  
-n = Jumlah sampel yang diambil  
+        st.write("McNemar p-value:", round(result.pvalue, 5))
 
-Maka jumlah sampel tiap kelas:
-
-**nh = (Nh / N) × n**
-""")
-
-if uploaded_file is not None:
-
-    total_data = len(df)
-    sample_size = st.number_input("Masukkan jumlah sampel (n)", min_value=1, max_value=total_data, value=int(total_data*0.3))
-
-    if st.button("Hitung Stratified Sampling"):
-
-        distribusi = df[label_col].value_counts().reset_index()
-        distribusi.columns = ["Kelas", "Jumlah (Nh)"]
-
-        distribusi["Total (N)"] = total_data
-        distribusi["Sampel (nh)"] = (distribusi["Jumlah (Nh)"] / total_data * sample_size).round().astype(int)
-
-        st.subheader("Perhitungan Manual (Seperti Excel)")
-        st.dataframe(distribusi)
-
-        st.markdown("""
-        ### Rumus Excel
-
-        Jika:
-        - Nh di sel B2
-        - N di sel C2
-        - n di sel D1
-
-        Maka rumus Excel:
-
-        `= (B2 / C2) * $D$1`
-        """)
+        if result.pvalue < 0.05:
+            st.success("Terdapat perbedaan signifikan (McNemar)")
+        else:
+            st.warning("Tidak terdapat perbedaan signifikan (McNemar)")
