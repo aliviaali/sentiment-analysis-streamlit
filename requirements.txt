@@ -2,8 +2,5 @@ streamlit
 scikit-learn
 pandas
 numpy
-matplotlib
-seaborn
-scipy
-statsmodels
+nltk
 Sastrawi
