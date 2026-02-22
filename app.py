@@ -16,7 +16,9 @@ from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 
 st.set_page_config(page_title="Sentiment Analysis Research App", layout="wide")
 
-# ================= LOAD MODEL =================
+# ==========================================================
+# ================= LOAD MODEL =============================
+# ==========================================================
 @st.cache_resource
 def load_models():
     nb_baseline = pickle.load(open("nb_baseline.pkl", "rb"))
@@ -28,7 +30,9 @@ def load_models():
 
 nb_baseline, nb_opt, svm_baseline, svm_opt, tfidf = load_models()
 
-# ================= PREPROCESSING =================
+# ==========================================================
+# ================= PREPROCESSING ==========================
+# ==========================================================
 factory = StemmerFactory()
 stemmer = factory.create_stemmer()
 
@@ -38,7 +42,9 @@ def preprocess(text):
     text = stemmer.stem(text)
     return text
 
-# ================= SIDEBAR =================
+# ==========================================================
+# ================= SIDEBAR MODEL ==========================
+# ==========================================================
 st.sidebar.title("Pengaturan Model")
 
 model_choice = st.sidebar.selectbox(
@@ -60,22 +66,24 @@ elif model_choice == "SVM Baseline":
 else:
     selected_model = svm_opt
 
-# ================= HALAMAN UTAMA =================
+# ==========================================================
+# ================= JUDUL ==========================
+# ==========================================================
 st.title("📊 Website Sentiment Analysis Skripsi")
-st.markdown("Implementasi Naive Bayes & SVM + TF-IDF + Uji Hipotesis")
+st.markdown("Implementasi Naive Bayes & SVM menggunakan TF-IDF + Uji Hipotesis")
 
 # ==========================================================
-# ================== INPUT MANUAL ==========================
+# ================= ANALISIS MANUAL ========================
 # ==========================================================
 st.header("Analisis Kalimat Manual")
 
 user_input = st.text_area("Masukkan Kalimat:")
 
 if st.button("Analisis Sentimen"):
+
     if user_input.strip() != "":
         cleaned = preprocess(user_input)
         vector = tfidf.transform([cleaned])
-
         prediction = selected_model.predict(vector)[0]
 
         st.subheader("Hasil Preprocessing")
@@ -84,125 +92,133 @@ if st.button("Analisis Sentimen"):
 
         st.success(f"Hasil Prediksi: {prediction}")
 
-        if hasattr(selected_model, "predict_proba"):
-            probs = selected_model.predict_proba(vector)[0]
-            prob_df = pd.DataFrame({
-                "Class": selected_model.classes_,
-                "Probability": probs
-            })
-            st.subheader("Probabilitas Kelas")
-            st.dataframe(prob_df)
-
-        # ================= TF-IDF EXCEL STYLE =================
+        # ================= TF-IDF EXPLANATION =================
         st.subheader("Perhitungan TF-IDF (Simulasi Excel)")
+
+        st.markdown("""
+        ### Rumus TF-IDF:
+
+        **TF (Term Frequency)**  
+        TF = (Jumlah kemunculan term dalam dokumen) / (Total kata dalam dokumen)
+
+        **IDF (Inverse Document Frequency)**  
+        IDF = log (Jumlah Dokumen / Jumlah Dokumen yang mengandung term)
+
+        **TF-IDF = TF × IDF**
+        """)
+
         feature_names = tfidf.get_feature_names_out()
         tfidf_values = vector.toarray()[0]
 
         tfidf_df = pd.DataFrame({
             "Term": feature_names,
-            "TF-IDF": tfidf_values
+            "TF-IDF Value": tfidf_values
         })
 
-        tfidf_df = tfidf_df[tfidf_df["TF-IDF"] > 0]
-        st.dataframe(tfidf_df.head(20))
+        tfidf_df = tfidf_df[tfidf_df["TF-IDF Value"] > 0]
+        st.dataframe(tfidf_df.sort_values(by="TF-IDF Value", ascending=False).head(20))
 
 # ==========================================================
-# ================== EVALUASI DATASET ======================
+# ================= EVALUASI MODEL =========================
 # ==========================================================
 st.header("Evaluasi Model + Uji Hipotesis")
 
-uploaded_file = st.file_uploader("Upload Dataset CSV")
+uploaded_file = st.file_uploader("Upload Dataset CSV", type=["csv"])
 
-if uploaded_file:
+if uploaded_file is not None:
+
     df = pd.read_csv(uploaded_file)
 
     st.subheader("Preview Dataset")
     st.dataframe(df.head())
-
     st.write("Kolom tersedia:", list(df.columns))
 
-    text_column = st.selectbox("Pilih Kolom Text:", df.columns)
-    label_column = st.selectbox("Pilih Kolom Label:", df.columns)
+    with st.form("evaluasi_form"):
 
-    if st.button("Proses Evaluasi"):
+        text_column = st.selectbox("Pilih Kolom Text:", df.columns)
+        label_column = st.selectbox("Pilih Kolom Label:", df.columns)
 
-        df["clean"] = df[text_column].astype(str).apply(preprocess)
+        submit_eval = st.form_submit_button("Proses Evaluasi")
 
-        st.subheader("Sebelum & Sesudah Preprocessing")
-        preview = pd.DataFrame({
-            "Text Asli": df[text_column].head(10),
-            "Setelah Preprocessing": df["clean"].head(10)
-        })
-        st.dataframe(preview)
+    if submit_eval:
 
-        X = tfidf.transform(df["clean"])
-        y = df[label_column]
-
-        # ================= PREDIKSI =================
-        nb_pred = nb_opt.predict(X)
-        svm_pred = svm_opt.predict(X)
-
-        # ================= METRIK =================
-        nb_acc = accuracy_score(y, nb_pred)
-        svm_acc = accuracy_score(y, svm_pred)
-
-        st.subheader("Accuracy")
-        st.write("Naive Bayes:", round(nb_acc, 4))
-        st.write("SVM:", round(svm_acc, 4))
-
-        # Precision Recall F1
-        nb_pr, nb_rc, nb_f1, _ = precision_recall_fscore_support(y, nb_pred, average="macro")
-        svm_pr, svm_rc, svm_f1, _ = precision_recall_fscore_support(y, svm_pred, average="macro")
-
-        st.subheader("F1 Macro")
-        st.write("Naive Bayes:", round(nb_f1, 4))
-        st.write("SVM:", round(svm_f1, 4))
-
-        # ================= CONFUSION MATRIX =================
-        st.subheader("Confusion Matrix - SVM")
-        cm = confusion_matrix(y, svm_pred)
-
-        fig, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-        st.pyplot(fig)
-
-        # =====================================================
-        # ================= UJI HIPOTESIS =====================
-        # =====================================================
-
-        st.subheader("Uji Hipotesis")
-
-        # ===== T-TEST =====
-        nb_correct = (nb_pred == y).astype(int)
-        svm_correct = (svm_pred == y).astype(int)
-
-        t_stat, p_value = stats.ttest_ind(nb_correct, svm_correct)
-
-        st.write("T-Test p-value:", round(p_value, 5))
-
-        if p_value < 0.05:
-            st.success("Terdapat perbedaan signifikan (T-Test)")
+        if text_column == label_column:
+            st.error("Kolom Text dan Label tidak boleh sama!")
         else:
-            st.warning("Tidak terdapat perbedaan signifikan (T-Test)")
+            st.info("Sedang memproses evaluasi...")
 
-        # ===== MCNEMAR TEST =====
-        table = [[0, 0], [0, 0]]
+            df["clean"] = df[text_column].astype(str).apply(preprocess)
 
-        for i in range(len(y)):
-            if nb_pred[i] == y.iloc[i] and svm_pred[i] == y.iloc[i]:
-                table[0][0] += 1
-            elif nb_pred[i] == y.iloc[i] and svm_pred[i] != y.iloc[i]:
-                table[0][1] += 1
-            elif nb_pred[i] != y.iloc[i] and svm_pred[i] == y.iloc[i]:
-                table[1][0] += 1
+            st.subheader("Sebelum & Sesudah Preprocessing")
+            preview = pd.DataFrame({
+                "Text Asli": df[text_column].head(10),
+                "Setelah Preprocessing": df["clean"].head(10)
+            })
+            st.dataframe(preview)
+
+            X = tfidf.transform(df["clean"])
+            y = df[label_column]
+
+            nb_pred = nb_opt.predict(X)
+            svm_pred = svm_opt.predict(X)
+
+            # ================= METRICS =================
+            nb_acc = accuracy_score(y, nb_pred)
+            svm_acc = accuracy_score(y, svm_pred)
+
+            st.subheader("Accuracy")
+            st.write("Naive Bayes:", round(nb_acc, 4))
+            st.write("SVM:", round(svm_acc, 4))
+
+            nb_f1 = precision_recall_fscore_support(y, nb_pred, average="macro")[2]
+            svm_f1 = precision_recall_fscore_support(y, svm_pred, average="macro")[2]
+
+            st.subheader("F1 Macro")
+            st.write("Naive Bayes:", round(nb_f1, 4))
+            st.write("SVM:", round(svm_f1, 4))
+
+            # ================= CONFUSION MATRIX =================
+            st.subheader("Confusion Matrix (SVM)")
+            cm = confusion_matrix(y, svm_pred)
+
+            fig, ax = plt.subplots()
+            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+            st.pyplot(fig)
+
+            # ================= UJI HIPOTESIS =================
+            st.subheader("Uji Hipotesis")
+
+            # T-Test
+            nb_correct = (nb_pred == y).astype(int)
+            svm_correct = (svm_pred == y).astype(int)
+
+            t_stat, p_value = stats.ttest_ind(nb_correct, svm_correct)
+
+            st.write("T-Test p-value:", round(p_value, 5))
+
+            if p_value < 0.05:
+                st.success("Terdapat perbedaan signifikan (T-Test)")
             else:
-                table[1][1] += 1
+                st.warning("Tidak terdapat perbedaan signifikan (T-Test)")
 
-        result = mcnemar(table, exact=True)
+            # McNemar
+            table = [[0, 0], [0, 0]]
 
-        st.write("McNemar p-value:", round(result.pvalue, 5))
+            for i in range(len(y)):
+                if nb_pred[i] == y.iloc[i] and svm_pred[i] == y.iloc[i]:
+                    table[0][0] += 1
+                elif nb_pred[i] == y.iloc[i] and svm_pred[i] != y.iloc[i]:
+                    table[0][1] += 1
+                elif nb_pred[i] != y.iloc[i] and svm_pred[i] == y.iloc[i]:
+                    table[1][0] += 1
+                else:
+                    table[1][1] += 1
 
-        if result.pvalue < 0.05:
-            st.success("Terdapat perbedaan signifikan (McNemar)")
-        else:
-            st.warning("Tidak terdapat perbedaan signifikan (McNemar)")
+            result = mcnemar(table, exact=True)
+
+            st.write("McNemar p-value:", round(result.pvalue, 5))
+
+            if result.pvalue < 0.05:
+                st.success("Terdapat perbedaan signifikan (McNemar)")
+            else:
+                st.warning("Tidak terdapat perbedaan signifikan (McNemar)")
