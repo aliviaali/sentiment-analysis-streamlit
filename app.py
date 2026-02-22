@@ -4,19 +4,22 @@ import re
 import pandas as pd
 import numpy as np
 import nltk
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from nltk.corpus import stopwords
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 
 # ===============================
 # PAGE CONFIG
 # ===============================
-st.set_page_config(page_title="Demo Sentiment Analysis", layout="wide")
-st.title("📊 Demo Skripsi Sentiment Analysis")
+st.set_page_config(page_title="Demo Skripsi Sentiment Analysis", layout="wide")
+st.title("📊 Sentiment Analysis Berita Ekonomi Indonesia")
 st.markdown("TF-IDF + Naive Bayes + SVM (Baseline & Optimized)")
 
 # ===============================
-# DOWNLOAD STOPWORDS (SAFE)
+# NLTK SAFE DOWNLOAD
 # ===============================
 try:
     nltk.download('stopwords', quiet=True)
@@ -24,20 +27,20 @@ except:
     pass
 
 # ===============================
-# LOAD ALL MODELS
+# LOAD MODELS
 # ===============================
 @st.cache_resource
 def load_models():
     models = {}
 
-    file_list = {
+    files = {
         "Naive Bayes Baseline": "nb_baseline.pkl",
         "Naive Bayes Optimized": "nb_optimized.pkl",
         "SVM Baseline": "svm_baseline.pkl",
         "SVM Optimized": "svm_optimized.pkl"
     }
 
-    for name, file in file_list.items():
+    for name, file in files.items():
         try:
             models[name] = pickle.load(open(file, "rb"))
         except:
@@ -62,22 +65,11 @@ stop_words = set(stopwords.words('indonesian'))
 
 def preprocessing(text):
     original = text
-
-    # Case Folding
     case_fold = text.lower()
-
-    # Cleaning
     cleaning = re.sub(r'[^a-zA-Z\s]', '', case_fold)
-
-    # Tokenization
     tokens = cleaning.split()
-
-    # Stopword Removal
-    stop_removed = [word for word in tokens if word not in stop_words]
-
-    # Stemming
-    stemming = [stemmer.stem(word) for word in stop_removed]
-
+    stop_removed = [w for w in tokens if w not in stop_words]
+    stemming = [stemmer.stem(w) for w in stop_removed]
     final_text = " ".join(stemming)
 
     return {
@@ -91,7 +83,7 @@ def preprocessing(text):
     }
 
 # ===============================
-# INPUT
+# INPUT TEXT
 # ===============================
 text_input = st.text_area("Masukkan Teks Berita Ekonomi:")
 
@@ -101,9 +93,9 @@ model_choice = st.selectbox(
 )
 
 # ===============================
-# PREDICTION BUTTON
+# ANALYSIS BUTTON
 # ===============================
-if st.button("🔍 Analisis Sentimen"):
+if st.button("🔍 Analisis Lengkap"):
 
     if text_input == "":
         st.warning("Masukkan teks terlebih dahulu")
@@ -113,29 +105,33 @@ if st.button("🔍 Analisis Sentimen"):
 
         result = preprocessing(text_input)
 
+        # ===============================
+        # PREPROCESSING DISPLAY
+        # ===============================
         st.subheader("📌 Tahapan Preprocessing")
 
         col1, col2 = st.columns(2)
-
         with col1:
-            st.markdown("### Sebelum Preprocessing")
+            st.markdown("### Sebelum")
             st.write(result["original"])
-
         with col2:
-            st.markdown("### Setelah Preprocessing")
+            st.markdown("### Sesudah")
             st.write(result["final"])
 
-        st.markdown("### Detail Proses")
         st.write("Case Folding:", result["case_folding"])
         st.write("Cleaning:", result["cleaning"])
         st.write("Tokenization:", result["tokenization"])
         st.write("Stopword Removal:", result["stopword_removal"])
         st.write("Stemming:", result["stemming"])
 
-        # ============================
+        # ===============================
         # TF-IDF
-        # ============================
-        st.subheader("📐 Hasil TF-IDF")
+        # ===============================
+        st.subheader("📐 Perhitungan TF-IDF")
+
+        st.latex(r"TF(t,d) = \frac{f(t,d)}{\sum f(t,d)}")
+        st.latex(r"IDF(t) = \log\left(\frac{N}{df(t)}\right)")
+        st.latex(r"TFIDF(t,d) = TF(t,d) \times IDF(t)")
 
         vector = tfidf.transform([result["final"]])
         feature_names = tfidf.get_feature_names_out()
@@ -151,23 +147,69 @@ if st.button("🔍 Analisis Sentimen"):
 
         st.dataframe(tfidf_df)
 
-        # ============================
+        # ===============================
         # PREDICTION
-        # ============================
-        st.subheader("🤖 Hasil Prediksi Model")
+        # ===============================
+        st.subheader("🤖 Hasil Prediksi")
+
+        results = {}
 
         if model_choice == "Semua Model":
-
             for name, model in models.items():
-                try:
-                    prediction = model.predict(vector)[0]
-                    st.success(f"{name} ➜ {prediction}")
-                except:
-                    st.error(f"{name} gagal melakukan prediksi")
-
+                pred = model.predict(vector)[0]
+                results[name] = pred
+                st.success(f"{name} ➜ {pred}")
         else:
-            try:
-                prediction = models[model_choice].predict(vector)[0]
-                st.success(f"{model_choice} ➜ {prediction}")
-            except:
-                st.error("Model gagal melakukan prediksi")
+            pred = models[model_choice].predict(vector)[0]
+            results[model_choice] = pred
+            st.success(f"{model_choice} ➜ {pred}")
+
+        # ===============================
+        # EVALUATION SIMULASI
+        # ===============================
+        st.subheader("📊 Evaluasi Model (Simulasi)")
+
+        true_label = st.selectbox("Masukkan Label Sebenarnya:", ["positif", "negatif", "netral"])
+
+        if st.button("Hitung Evaluasi"):
+
+            for name, pred in results.items():
+
+                y_true = [true_label]
+                y_pred = [pred]
+
+                acc = accuracy_score(y_true, y_pred)
+                prec = precision_score(y_true, y_pred, average='macro', zero_division=0)
+                rec = recall_score(y_true, y_pred, average='macro', zero_division=0)
+                f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
+
+                st.write(f"### {name}")
+                st.write("Accuracy:", acc)
+                st.write("Precision:", prec)
+                st.write("Recall:", rec)
+                st.write("F1-Score:", f1)
+
+                cm = confusion_matrix(y_true, y_pred, labels=["positif","negatif","netral"])
+
+                fig, ax = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt='d',
+                            xticklabels=["positif","negatif","netral"],
+                            yticklabels=["positif","negatif","netral"])
+                plt.ylabel("Actual")
+                plt.xlabel("Predicted")
+                st.pyplot(fig)
+
+        # ===============================
+        # UJI HIPOTESIS
+        # ===============================
+        st.subheader("📑 Uji Hipotesis")
+
+        st.markdown("""
+        **H0:** Tidak terdapat perbedaan performa signifikan antara model baseline dan optimized.  
+        **H1:** Terdapat perbedaan performa signifikan antara model baseline dan optimized.
+        """)
+
+        st.info("""
+        Jika nilai Accuracy / F1-Score model optimized lebih tinggi,
+        maka H0 ditolak dan H1 diterima.
+        """)
