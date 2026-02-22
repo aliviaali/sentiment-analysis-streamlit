@@ -4,3 +4,5 @@ pandas
 numpy
 nltk
 Sastrawi
+matplotlib
+seaborn
